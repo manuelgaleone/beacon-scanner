@@ -11,7 +11,8 @@
     "prebuild:clean": "npx expo prebuild --clean",
     "clean": "rm -rf node_modules ios android && npm install && npx expo prebuild",
     "dev:android": "expo start --android --dev-client",
-    "dev:ios": "expo start --ios --dev-client"
+    "dev:ios": "expo start --ios --dev-client",
+    "postinstall": "./scripts/strip-bitcode.sh"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",

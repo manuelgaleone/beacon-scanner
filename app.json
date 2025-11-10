@@ -32,7 +32,11 @@
         "NSLocationWhenInUseUsageDescription": "This app needs location access to detect nearby Bluetooth beacons.",
         "NSBluetoothAlwaysUsageDescription": "This app uses Bluetooth to detect and communicate with nearby beacons.",
         "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to detect and communicate with nearby beacons.",
-        "UIBackgroundModes": ["location"]
+        "UIBackgroundModes": [
+          "location",
+          "location"
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -48,13 +52,21 @@
         "BLUETOOTH_ADMIN",
         "BLUETOOTH_SCAN",
         "BLUETOOTH_CONNECT",
-        "ACCESS_BACKGROUND_LOCATION"
+        "ACCESS_BACKGROUND_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ],
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "7b40b0af-1026-4697-b97f-b99c491f8ae0"
+      }
+    },
+    "owner": "smartfactorylab"
   }
 }
