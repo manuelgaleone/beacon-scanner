@@ -1,25 +1,55 @@
 {
   "expo": {
-    "name": "beacon-scanner",
-    "slug": "beacon-scanner",
+    "name": "cosmo-ibeacon",
+    "slug": "cosmo-ibeacon",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "plugins": [
+      "expo-dev-client",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location to detect nearby beacons.",
+          "locationAlwaysPermission": "Allow $(PRODUCT_NAME) to use your location to detect nearby beacons.",
+          "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your location to detect nearby beacons."
+        }
+      ]
+    ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.beaconscanner.app",
+      "infoPlist": {
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs location access to detect nearby Bluetooth beacons.",
+        "NSLocationAlwaysUsageDescription": "This app needs location access to detect nearby Bluetooth beacons in background.",
+        "NSLocationWhenInUseUsageDescription": "This app needs location access to detect nearby Bluetooth beacons.",
+        "NSBluetoothAlwaysUsageDescription": "This app uses Bluetooth to detect and communicate with nearby beacons.",
+        "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to detect and communicate with nearby beacons.",
+        "UIBackgroundModes": ["location"]
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
+      "package": "com.beaconscanner.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "ACCESS_BACKGROUND_LOCATION"
+      ],
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
