@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -10,14 +10,39 @@ import {
   Alert,
   SafeAreaView,
   StatusBar,
-  ActivityIndicator
+  ActivityIndicator,
+  DeviceEventEmitter,
+  Animated
 } from 'react-native';
 import Kontakt, { KontaktModule } from 'react-native-kontaktio';
 import * as Location from 'expo-location';
 import { NativeEventEmitter } from 'react-native';
 
-const { connect, startScanning, stopScanning } = Kontakt;
+const { 
+  connect, 
+  init, 
+  startScanning, 
+  stopScanning, 
+  startDiscovery, 
+  stopDiscovery,
+  startRangingBeaconsInRegion,
+  stopRangingBeaconsInRegion
+} = Kontakt;
 const kontaktEmitter = new NativeEventEmitter(KontaktModule);
+const isAndroid = Platform.OS === 'android';
+
+// Common beacon UUIDs to scan for (iOS only)
+// Add more UUIDs here if you have beacons with different UUIDs
+const COMMON_BEACON_UUIDS = [
+  { identifier: 'Kontakt', uuid: 'f7826da6-4fa2-4e98-8024-bc5b71e0893e' }, // Kontakt.io
+  { identifier: 'Estimote', uuid: 'B9407F30-F5F8-466E-AFF9-25556B57FE6D' }, // Estimote
+  { identifier: 'AirLocate', uuid: 'E2C56DB5-DFFB-48D2-B060-D0F5A71096E0' }, // Apple AirLocate
+  { identifier: 'RadBeacon', uuid: '2F234454-CF6D-4A0F-ADF2-F4911BA9FFA6' }, // RadBeacon
+  { identifier: 'Radius', uuid: '8AEFB031-6C32-486F-825B-E26FA193487D' }, // Radius Networks
+  { identifier: 'BlueUp', uuid: 'ACFD065E-C3C0-11E3-9BBE-1A514932AC01' }, // BlueUp
+  // Add your custom UUID here if needed:
+  // { identifier: 'Custom', uuid: 'YOUR-UUID-HERE' },
+];
 
 interface Beacon {
   uuid: string;
@@ -52,8 +77,15 @@ export default function App() {
   useEffect(() => {
     requestPermissions();
     return () => {
+      // Cleanup on unmount
       if (isScanning) {
-        stopScanning();
+        stopBeaconScanning();
+      }
+      if (isAndroid) {
+        DeviceEventEmitter.removeAllListeners('beaconsDidUpdate');
+      } else {
+        kontaktEmitter.removeAllListeners('didDiscoverDevices');
+        kontaktEmitter.removeAllListeners('didRangeBeacons');
       }
     };
   }, []);
@@ -128,8 +160,13 @@ export default function App() {
 
   const initializeKontakt = async () => {
     try {
-      await connect();
-      console.log('Kontakt SDK connected');
+      if (isAndroid) {
+        await connect();
+        console.log('Kontakt SDK connected (Android)');
+      } else {
+        await init();
+        console.log('Kontakt SDK initialized (iOS)');
+      }
     } catch (error) {
       console.error('Kontakt SDK connection error:', error);
       Alert.alert('Error', 'Failed to initialize Cosmo IBeacon');
@@ -146,46 +183,55 @@ export default function App() {
       setIsScanning(true);
       setBeacons([]);
 
-      // Start scanning for beacons
-      await startScanning();
-
-      // Listen for beacon discoveries
-      kontaktEmitter.addListener('didDiscoverDevices', (event: BeaconDiscoveryEvent) => {
-        const discoveredBeacons = event.beacons;
-        if (discoveredBeacons && discoveredBeacons.length > 0) {
-          const formattedBeacons = discoveredBeacons.map((beacon: KontaktBeacon) => ({
-            uuid: beacon.uuid || beacon.proximityUUID || 'Unknown',
-            major: beacon.major || 0,
-            minor: beacon.minor || 0,
-            rssi: beacon.rssi || 0,
-            proximity: beacon.proximity || 'unknown',
-            accuracy: beacon.accuracy || 0,
-            timestamp: Date.now(),
-          }));
-
-          // Update beacons list, removing duplicates
-          setBeacons((prevBeacons) => {
-            const updatedBeacons = [...formattedBeacons];
-            
-            // Merge with previous beacons, keeping the most recent data
-            prevBeacons.forEach((prevBeacon) => {
-              const exists = formattedBeacons.find(
-                (b: Beacon) => b.uuid === prevBeacon.uuid && 
-                       b.major === prevBeacon.major && 
-                       b.minor === prevBeacon.minor
-              );
-              if (!exists) {
-                // Keep old beacon if not in new scan (might still be nearby)
-                if (Date.now() - prevBeacon.timestamp < 5000) {
-                  updatedBeacons.push(prevBeacon);
-                }
-              }
+      // Start scanning for beacons based on platform
+      if (isAndroid) {
+        await startScanning();
+        
+        // Android event listener
+        DeviceEventEmitter.addListener('beaconsDidUpdate', ({ beacons: discoveredBeacons, region }: any) => {
+          console.log('Android beacons discovered:', discoveredBeacons?.length);
+          if (discoveredBeacons && discoveredBeacons.length > 0) {
+            updateBeaconsList(discoveredBeacons);
+          }
+        });
+      } else {
+        // iOS - Scan for beacons with multiple common UUIDs
+        // Since iOS requires UUID for ranging, we add the most common beacon UUIDs
+        
+        // Start discovery for Kontakt.io beacons (works without UUID)
+        await startDiscovery();
+        console.log('Started discovery for Kontakt.io beacons');
+        
+        // Start ranging for each common UUID to detect ANY beacon type
+        for (const beacon of COMMON_BEACON_UUIDS) {
+          try {
+            await startRangingBeaconsInRegion({
+              identifier: beacon.identifier,
+              uuid: beacon.uuid,
             });
-
-            return updatedBeacons;
-          });
+            console.log(`Started ranging for ${beacon.identifier} beacons`);
+          } catch (error) {
+            console.log(`Could not start ranging for ${beacon.identifier}:`, error);
+          }
         }
-      });
+        
+        // iOS event listeners
+        kontaktEmitter.addListener('didDiscoverDevices', ({ beacons: discoveredBeacons }: any) => {
+          console.log('iOS didDiscoverDevices:', discoveredBeacons?.length);
+          if (discoveredBeacons && discoveredBeacons.length > 0) {
+            updateBeaconsList(discoveredBeacons);
+          }
+        });
+        
+        kontaktEmitter.addListener('didRangeBeacons', ({ beacons: discoveredBeacons, region }: any) => {
+          console.log('iOS didRangeBeacons in region', region?.identifier, ':', discoveredBeacons?.length);
+          if (discoveredBeacons && discoveredBeacons.length > 0) {
+            updateBeaconsList(discoveredBeacons);
+          }
+        });
+        
+        console.log(`iOS scanning started for ${COMMON_BEACON_UUIDS.length} beacon types`);
+      }
 
     } catch (error) {
       console.error('Scanning error:', error);
@@ -194,86 +240,246 @@ export default function App() {
     }
   };
 
+  const updateBeaconsList = (discoveredBeacons: KontaktBeacon[]) => {
+    console.log('Updating beacons list with:', discoveredBeacons.length, 'beacons');
+    
+    const formattedBeacons = discoveredBeacons
+      .filter((beacon: KontaktBeacon) => {
+        // Filtra beacon con RSSI = 0 (valore anomalo)
+        const rssi = beacon.rssi || 0;
+        if (rssi === 0) {
+          console.log('Skipping beacon with RSSI = 0:', beacon.uuid);
+          return false;
+        }
+        return true;
+      })
+      .map((beacon: KontaktBeacon, index: number) => {
+        console.log(`Beacon ${index}:`, JSON.stringify(beacon, null, 2));
+        
+        return {
+          uuid: beacon.uuid || beacon.proximityUUID || 'Unknown',
+          major: beacon.major || 0,
+          minor: beacon.minor || 0,
+          rssi: beacon.rssi || -100, // Default a valore molto basso se undefined
+          proximity: beacon.proximity || 'unknown',
+          accuracy: beacon.accuracy || 0,
+          timestamp: Date.now(),
+        };
+      });
+
+    console.log('Formatted beacons:', formattedBeacons.length);
+
+    // Update beacons list, removing duplicates
+    setBeacons((prevBeacons) => {
+      const updatedBeacons = [...formattedBeacons];
+      
+      // Merge with previous beacons, keeping the most recent data
+      prevBeacons.forEach((prevBeacon) => {
+        const exists = formattedBeacons.find(
+          (b: Beacon) => b.uuid === prevBeacon.uuid && 
+                 b.major === prevBeacon.major && 
+                 b.minor === prevBeacon.minor
+        );
+        if (!exists) {
+          // Keep old beacon if not in new scan (might still be nearby)
+          if (Date.now() - prevBeacon.timestamp < 5000) {
+            updatedBeacons.push(prevBeacon);
+          }
+        }
+      });
+
+      // Ordina per RSSI (più alto = più vicino) - RSSI più vicino a 0 = segnale più forte
+      updatedBeacons.sort((a, b) => b.rssi - a.rssi);
+
+      console.log('Total beacons after merge and sort:', updatedBeacons.length);
+      if (updatedBeacons.length > 0) {
+        console.log('Closest beacon RSSI:', updatedBeacons[0].rssi);
+      }
+      
+      return updatedBeacons;
+    });
+  };
+
   const stopBeaconScanning = async () => {
     try {
-      await stopScanning();
-      kontaktEmitter.removeAllListeners('didDiscoverDevices');
+      if (isAndroid) {
+        await stopScanning();
+        DeviceEventEmitter.removeAllListeners('beaconsDidUpdate');
+      } else {
+        // Stop discovery
+        await stopDiscovery();
+        
+        // Stop ranging for all common UUIDs
+        for (const beacon of COMMON_BEACON_UUIDS) {
+          try {
+            await stopRangingBeaconsInRegion({
+              identifier: beacon.identifier,
+              uuid: beacon.uuid,
+            });
+            console.log(`Stopped ranging for ${beacon.identifier}`);
+          } catch (error) {
+            console.log(`Could not stop ranging for ${beacon.identifier}:`, error);
+          }
+        }
+        
+        kontaktEmitter.removeAllListeners('didDiscoverDevices');
+        kontaktEmitter.removeAllListeners('didRangeBeacons');
+      }
       setIsScanning(false);
+      console.log('Scanning stopped');
     } catch (error) {
       console.error('Stop scanning error:', error);
     }
   };
 
-  const getDistanceColor = (rssi: number, accuracy: number) => {
-    // RSSI typically ranges from -30 (very close) to -100 (far)
-    // Accuracy is in meters
+  /**
+   * Calcola la distanza dal beacon basandosi sull'RSSI
+   * Formula: distance = 10 ^ ((txPower - RSSI) / (10 * n))
+   * 
+   * @param rssi - Received Signal Strength Indicator (dBm)
+   * @param txPower - Potenza di trasmissione a 1 metro (default: -59 dBm)
+   * @param n - Fattore di attenuazione del segnale (2-4, default: 2.5 per ambienti interni)
+   * @returns distanza in metri
+   */
+  const calculateDistance = (rssi: number, txPower: number = -59, n: number = 2.5): number => {
+    if (rssi === 0) {
+      return -1; // Valore non valido
+    }
     
-    if (accuracy < 1 || rssi > -50) {
-      return '#4CAF50'; // Green - Very close (< 1m)
-    } else if (accuracy < 3 || rssi > -70) {
-      return '#FFC107'; // Yellow - Medium distance (1-3m)
+    // Formula per calcolare la distanza
+    const distance = Math.pow(10, (txPower - rssi) / (10 * n));
+    
+    return distance;
+  };
+
+  const getDistanceColor = (rssi: number) => {
+    const distance = calculateDistance(rssi);
+    
+    // Classificazione basata sulla distanza calcolata
+    if (distance < 0) {
+      return '#999999'; // Grigio - Valore non valido
+    } else if (distance < 1) {
+      return '#4CAF50'; // Verde - Molto vicino (< 1m)
+    } else if (distance < 3) {
+      return '#FFC107'; // Giallo - Distanza media (1-3m)
+    } else if (distance < 10) {
+      return '#FF9800'; // Arancione - Lontano (3-10m)
     } else {
-      return '#F44336'; // Red - Far (> 3m)
+      return '#F44336'; // Rosso - Molto lontano (> 10m)
     }
   };
 
-  const getDistanceText = (rssi: number, accuracy: number) => {
-    if (accuracy < 1 || rssi > -50) {
-      return 'Very Close';
-    } else if (accuracy < 3 || rssi > -70) {
-      return 'Medium';
+  const getDistanceText = (rssi: number) => {
+    const distance = calculateDistance(rssi);
+    
+    if (distance < 0) {
+      return 'Unknown';
+    } else if (distance < 1) {
+      return 'Molto Vicino';
+    } else if (distance < 3) {
+      return 'Vicino';
+    } else if (distance < 10) {
+      return 'Lontano';
     } else {
-      return 'Far';
+      return 'Molto Lontano';
     }
   };
 
-  const renderBeacon = ({ item }: { item: Beacon }) => (
-    <View style={styles.beaconCard}>
-      <View style={styles.beaconHeader}>
-        <View 
-          style={[
-            styles.statusIndicator, 
-            { backgroundColor: getDistanceColor(item.rssi, item.accuracy) }
-          ]} 
-        />
-        <Text style={styles.distanceText}>
-          {getDistanceText(item.rssi, item.accuracy)}
-        </Text>
-      </View>
-      
-      <View style={styles.beaconInfo}>
-        <View style={styles.infoRow}>
-          <Text style={styles.label}>UUID:</Text>
-          <Text style={styles.value} numberOfLines={1}>
-            {item.uuid}
+  // Componente Beacon Card con animazione
+  const BeaconCard = ({ item, isClosest }: { item: Beacon; isClosest: boolean }) => {
+    const pulseAnim = useRef(new Animated.Value(1)).current;
+
+    useEffect(() => {
+      if (isClosest) {
+        // Animazione lampeggiante per il beacon più vicino
+        const pulse = Animated.loop(
+          Animated.sequence([
+            Animated.timing(pulseAnim, {
+              toValue: 1.3,
+              duration: 500,
+              useNativeDriver: true,
+            }),
+            Animated.timing(pulseAnim, {
+              toValue: 1,
+              duration: 500,
+              useNativeDriver: true,
+            }),
+          ])
+        );
+        pulse.start();
+
+        return () => pulse.stop();
+      } else {
+        pulseAnim.setValue(1);
+      }
+    }, [isClosest, pulseAnim]);
+
+    return (
+      <View style={[
+        styles.beaconCard,
+        isClosest && styles.closestBeaconCard
+      ]}>
+        {isClosest && (
+          <View style={styles.closestBadge}>
+            <Text style={styles.closestBadgeText}>📍 PIÙ VICINO</Text>
+          </View>
+        )}
+        
+        <View style={styles.beaconHeader}>
+          <Animated.View 
+            style={[
+              styles.statusIndicator, 
+              { 
+                backgroundColor: getDistanceColor(item.rssi),
+                transform: [{ scale: pulseAnim }]
+              }
+            ]} 
+          />
+          <Text style={styles.distanceText}>
+            {getDistanceText(item.rssi)}
           </Text>
         </View>
         
-        <View style={styles.beaconMetrics}>
-          <View style={styles.metric}>
-            <Text style={styles.label}>Major</Text>
-            <Text style={styles.metricValue}>{item.major}</Text>
-          </View>
-          
-          <View style={styles.metric}>
-            <Text style={styles.label}>Minor</Text>
-            <Text style={styles.metricValue}>{item.minor}</Text>
-          </View>
-          
-          <View style={styles.metric}>
-            <Text style={styles.label}>RSSI</Text>
-            <Text style={styles.metricValue}>{item.rssi} dBm</Text>
-          </View>
-          
-          <View style={styles.metric}>
-            <Text style={styles.label}>Distance</Text>
-            <Text style={styles.metricValue}>
-              {item.accuracy > 0 ? `${item.accuracy.toFixed(2)}m` : 'N/A'}
+        <View style={styles.beaconInfo}>
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>UUID:</Text>
+            <Text style={styles.value} numberOfLines={1}>
+              {item.uuid}
             </Text>
+          </View>
+          
+          <View style={styles.beaconMetrics}>
+            <View style={styles.metric}>
+              <Text style={styles.label}>Major</Text>
+              <Text style={styles.metricValue}>{item.major}</Text>
+            </View>
+            
+            <View style={styles.metric}>
+              <Text style={styles.label}>Minor</Text>
+              <Text style={styles.metricValue}>{item.minor}</Text>
+            </View>
+            
+            <View style={styles.metric}>
+              <Text style={styles.label}>RSSI</Text>
+              <Text style={styles.metricValue}>{item.rssi} dBm</Text>
+            </View>
+            
+            <View style={styles.metric}>
+              <Text style={styles.label}>Distanza</Text>
+              <Text style={styles.metricValue}>
+                {calculateDistance(item.rssi) >= 0 
+                  ? `${calculateDistance(item.rssi).toFixed(2)}m` 
+                  : 'N/A'}
+              </Text>
+            </View>
           </View>
         </View>
       </View>
-    </View>
+    );
+  };
+
+  const renderBeacon = ({ item, index }: { item: Beacon; index: number }) => (
+    <BeaconCard item={item} isClosest={index === 0 && beacons.length > 0} />
   );
 
   if (isLoading) {
@@ -393,6 +599,36 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+  },
+  closestBeaconCard: {
+    borderWidth: 2,
+    borderColor: '#4CAF50',
+    backgroundColor: '#F1F8F4',
+    shadowColor: '#4CAF50',
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  closestBadge: {
+    position: 'absolute',
+    top: -8,
+    right: 12,
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    zIndex: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  closestBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   beaconHeader: {
     flexDirection: 'row',
