@@ -23,6 +23,7 @@ const {
   init, 
   startScanning, 
   stopScanning, 
+  disconnect,
   startDiscovery, 
   stopDiscovery,
   startRangingBeaconsInRegion,
@@ -83,6 +84,10 @@ export default function App() {
       }
       if (isAndroid) {
         DeviceEventEmitter.removeAllListeners('beaconsDidUpdate');
+        // Disconnect Kontakt SDK on Android cleanup
+        disconnect().catch((error) => {
+          console.error('Error disconnecting Kontakt SDK:', error);
+        });
       } else {
         kontaktEmitter.removeAllListeners('didDiscoverDevices');
         kontaktEmitter.removeAllListeners('didRangeBeacons');
@@ -161,6 +166,8 @@ export default function App() {
   const initializeKontakt = async () => {
     try {
       if (isAndroid) {
+        // Connect with IBEACON type (default, but explicit for clarity)
+        // Note: connect() without params defaults to IBEACON scanning
         await connect();
         console.log('Kontakt SDK connected (Android)');
       } else {
@@ -305,6 +312,8 @@ export default function App() {
       if (isAndroid) {
         await stopScanning();
         DeviceEventEmitter.removeAllListeners('beaconsDidUpdate');
+        // Note: disconnect() is called in useEffect cleanup, not here
+        // to allow re-scanning without re-initializing
       } else {
         // Stop discovery
         await stopDiscovery();
